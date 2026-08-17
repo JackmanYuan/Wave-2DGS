@@ -1,13 +1,15 @@
 *.pyc
 .vscode
-output
-build
-data
+/output/
+/build/
+/data/*
+!/data/README.md
 *.ply
 **/PKG-INFO
 # submodules
 **__pycache__**
 *.png
+!assets/wave2dgs_teaser.png
 *.out
 eval
 *.npz

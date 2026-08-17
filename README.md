@@ -2,6 +2,14 @@
 
 **Sparse local wave modulation for 2D Gaussian Splatting.**
 
+<p align="center">
+  <img src="assets/wave2dgs_teaser.png" width="100%" alt="Wave-2DGS rendering, wave contribution, and projected wave patterns on DTU and Replica">
+</p>
+
+<p align="center">
+  <em>From left: ground truth, Wave-2DGS rendering, normalized wave contribution, and projected local wave patterns on DTU (top) and Replica (bottom).</em>
+</p>
+
 Wave-2DGS extends [2D Gaussian Splatting (2DGS)](https://github.com/hbb1/2d-gaussian-splatting)
 with one explicit, view-independent sinusoidal RGB residual per primitive. The
 original spherical-harmonic branch still models view-dependent color, while the
@@ -47,18 +55,60 @@ environment that includes a matching `nvcc` or set `CUDA_HOME` explicitly:
 CUDA_HOME=/path/to/cuda-11.8 bash scripts/install_extensions.sh
 ```
 
+## Dataset setup
+
+Dataset files are kept under the repository-local `data/` directory, which is
+ignored by Git. The examples below assume this layout:
+
+```text
+data/
+├── Replica/
+│   ├── office0/
+│   ├── office1/
+│   └── ...
+├── cull_replica_mesh/        # optional, for geometry evaluation
+│   ├── office0.ply
+│   └── ...
+├── DTU/                      # preprocessed 2DGS scenes
+│   ├── scan24/
+│   └── ...
+└── DTU_Official/             # official geometry-evaluation data
+    ├── ObsMask/
+    └── Points/
+```
+
+- **Replica:** download the [NICE-SLAM RGB-D release](https://cvg-data.inf.ethz.ch/nice-slam/data/Replica.zip),
+  which provides the `traj.txt` and `results/` layout expected by this loader,
+  and extract it under `data/`. The optional
+  [culled ground-truth meshes](https://cvg-data.inf.ethz.ch/nice-slam/cull_replica_mesh.zip)
+  are used for geometry evaluation. See the
+  [official Replica repository](https://github.com/facebookresearch/Replica-Dataset)
+  for the dataset license and original assets.
+- **DTU:** download the preprocessed scenes distributed by
+  [2DGS on Hugging Face](https://huggingface.co/datasets/dylanebert/2DGS)
+  (or its [Google Drive mirror](https://drive.google.com/drive/folders/1SJFgt8qhQomHX55Q4xSvYE2C6-8tFll9))
+  into `data/DTU`. Geometry evaluation additionally requires the official
+  [DTU Points and observation masks](https://roboimagedata.compute.dtu.dk/?page_id=36),
+  arranged under `data/DTU_Official`.
+
+Large datasets may remain on another disk by symlinking these subdirectories.
+The exact expected structures are documented in
+[docs/DATASETS.md](docs/DATASETS.md).
+
 ## Quick start
 
 Original 2DGS remains the default:
 
 ```bash
-python train.py -s <dataset> -m output/baseline
+python train.py -s data/Replica/office0 -m output/office0_baseline \
+  --eval --replica_pose_convention raw
 ```
 
 The selected Wave-2DGS configuration used in our main experiments is:
 
 ```bash
-python train.py -s <dataset> -m output/wave \
+python train.py -s data/Replica/office0 -m output/office0_wave \
+  --eval --replica_pose_convention raw \
   --enable_primitive_wave \
   --wave_k_init 3.1416 \
   --wave_amp_lr 0.001 \
@@ -74,8 +124,9 @@ an optional hard cap shared by baseline and Wave-2DGS runs.
 Render a trained Wave-2DGS checkpoint:
 
 ```bash
-python render_lite.py -s <dataset> -m output/wave \
+python render_lite.py -s data/Replica/office0 -m output/office0_wave \
   --iteration 30000 --skip_train \
+  --eval --replica_pose_convention raw \
   --enable_primitive_wave --wave_k_init 3.1416
 ```
 
@@ -87,7 +138,7 @@ the same seed, 50k cap, densification schedule, initializer, and 16 held-out
 views:
 
 ```bash
-SOURCE_PATH=/path/to/Replica/office0 \
+SOURCE_PATH=data/Replica/office0 \
 OUTPUT_ROOT=output/replica_wave2dgs_3k \
 SEED=0 \
 bash scripts/run_replica_wave2dgs.sh
@@ -99,8 +150,8 @@ The final comparison is written to
 For matched fixed-view TSDF reconstruction:
 
 ```bash
-SOURCE_PATH=/path/to/Replica/office0 \
-GT_MESH=/path/to/Replica/office0_mesh.ply \
+SOURCE_PATH=data/Replica/office0 \
+GT_MESH=data/cull_replica_mesh/office0.ply \
 BASELINE_PATH=output/replica_wave2dgs_3k/office0/seed_0/baseline \
 WAVE_PATH=output/replica_wave2dgs_3k/office0/seed_0/wave \
 bash scripts/run_replica_geometry_pair.sh
@@ -115,8 +166,8 @@ The DTU runner defaults to the original 30k schedule, stops densification at
 15k, and uses a shared 150k primitive cap:
 
 ```bash
-DTU_ROOT=/path/to/preprocessed/DTU \
-DTU_OFFICIAL=/path/to/DTU/Points \
+DTU_ROOT=data/DTU \
+DTU_OFFICIAL=data/DTU_Official \
 SCENES="scan24 scan37" \
 SEEDS="0" \
 RUN_GEOMETRY=1 \
@@ -131,7 +182,7 @@ retained wave entries:
 
 ```bash
 python scripts/evaluate_wave_pruning.py \
-  -s /path/to/Replica/office0 \
+  -s data/Replica/office0 \
   -m output/replica_wave2dgs_3k/office0/seed_0/wave \
   --iteration 3000 \
   --thresholds 0,0.001,0.003,0.005,0.008,0.01,0.015,0.02 \
