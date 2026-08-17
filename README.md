@@ -39,7 +39,13 @@ bash scripts/install_extensions.sh
 
 `install_extensions.sh` initializes the pinned upstream submodules, applies the
 included Wave-2DGS rasterizer patch, and builds both CUDA extensions. Re-running
-the script is safe when the patch is already applied.
+the script is safe when the patch is already applied. If the system CUDA
+compiler differs from the CUDA version used by PyTorch, either select a conda
+environment that includes a matching `nvcc` or set `CUDA_HOME` explicitly:
+
+```bash
+CUDA_HOME=/path/to/cuda-11.8 bash scripts/install_extensions.sh
+```
 
 ## Quick start
 

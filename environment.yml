@@ -10,9 +10,14 @@ dependencies:
   - pip=23.3.1
   - python=3.8.18
   - pytorch=2.0.0
+  - pytorch-cuda=11.8
   - torchaudio=2.0.0
   - torchvision=0.15.0
   - typing_extensions=4.9.0
+  - cuda-nvcc=11.8
+  - gcc_linux-64=11.2
+  - gxx_linux-64=11.2
+  - ninja
   - pip:
     - open3d==0.18.0
     - mediapy==1.1.2
