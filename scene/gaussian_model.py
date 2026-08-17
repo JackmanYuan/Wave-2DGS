@@ -41,15 +41,23 @@ class GaussianModel:
         self.rotation_activation = torch.nn.functional.normalize
 
 
-    def __init__(self, sh_degree : int):
+    def __init__(self, sh_degree : int, enable_primitive_wave: bool = False, wave_k_init: float = 6.283185307,
+                 wave_amp_init: float = 0.0, wave_random_phase_init: bool = False,
+                 wave_amplitude_only: bool = False):
         self.active_sh_degree = 0
         self.max_sh_degree = sh_degree  
+        self.enable_primitive_wave = enable_primitive_wave
+        self.wave_k_init = float(wave_k_init)
+        self.wave_amp_init = float(wave_amp_init)
+        self.wave_random_phase_init = bool(wave_random_phase_init)
+        self.wave_amplitude_only = bool(wave_amplitude_only)
         self._xyz = torch.empty(0)
         self._features_dc = torch.empty(0)
         self._features_rest = torch.empty(0)
         self._scaling = torch.empty(0)
         self._rotation = torch.empty(0)
         self._opacity = torch.empty(0)
+        self._wave_params = torch.empty(0)
         self.max_radii2D = torch.empty(0)
         self.xyz_gradient_accum = torch.empty(0)
         self.denom = torch.empty(0)
@@ -58,8 +66,20 @@ class GaussianModel:
         self.spatial_lr_scale = 0
         self.setup_functions()
 
+    def _initial_wave(self, count, device):
+        """Create the Wave-V1 prior used before any data-driven updates."""
+        wave = torch.zeros((count, 7), dtype=torch.float, device=device)
+        wave[:, :3] = self.wave_amp_init
+        wave[:, 3] = self.wave_k_init
+        if self.wave_random_phase_init:
+            wave[:, 5].uniform_(-np.pi, np.pi)
+        # The public Wave-2DGS model enables the residual for every primitive.
+        # Amplitude sparsity, rather than a learned gate, controls utilization.
+        wave[:, 6] = 1.0
+        return wave
+
     def capture(self):
-        return (
+        state = (
             self.active_sh_degree,
             self._xyz,
             self._features_dc,
@@ -73,6 +93,9 @@ class GaussianModel:
             self.optimizer.state_dict(),
             self.spatial_lr_scale,
         )
+        if self.enable_primitive_wave:
+            state = state + (self._wave_params,)
+        return state
     
     def restore(self, model_args, training_args):
         (self.active_sh_degree, 
@@ -86,11 +109,22 @@ class GaussianModel:
         xyz_gradient_accum, 
         denom,
         opt_dict, 
-        self.spatial_lr_scale) = model_args
+        self.spatial_lr_scale) = model_args[:12]
+        if self.enable_primitive_wave:
+            if len(model_args) > 12:
+                self._wave_params = model_args[12]
+            else:
+                wave = self._initial_wave(self._xyz.shape[0], self._xyz.device)
+                self._wave_params = nn.Parameter(wave.requires_grad_(True))
         self.training_setup(training_args)
         self.xyz_gradient_accum = xyz_gradient_accum
         self.denom = denom
-        self.optimizer.load_state_dict(opt_dict)
+        try:
+            self.optimizer.load_state_dict(opt_dict)
+        except ValueError:
+            if not self.enable_primitive_wave:
+                raise
+            print("Checkpoint optimizer has no wave group; wave optimizer state initialized fresh.")
 
     @property
     def get_scaling(self):
@@ -111,6 +145,16 @@ class GaussianModel:
         return torch.cat((features_dc, features_rest), dim=1)
     
     @property
+    def get_wave_params(self):
+        return self._wave_params if self.enable_primitive_wave else None
+
+    @property
+    def wave_active_fraction(self):
+        if not self.enable_primitive_wave or self._wave_params.numel() == 0:
+            return 0.0
+        return float((self._wave_params[:, 6] >= 0.5).float().mean().item())
+
+    @property
     def get_opacity(self):
         return self.opacity_activation(self._opacity)
     
@@ -121,17 +165,32 @@ class GaussianModel:
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
 
-    def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float):
+    def create_from_pcd(self, pcd : BasicPointCloud, spatial_lr_scale : float,
+                        max_primitives: int = 0, initialization_seed: int = 0):
+        """Initialize from a point cloud, optionally enforcing a global cap."""
         self.spatial_lr_scale = spatial_lr_scale
-        fused_point_cloud = torch.tensor(np.asarray(pcd.points)).float().cuda()
-        fused_color = RGB2SH(torch.tensor(np.asarray(pcd.colors)).float().cuda())
+        points = np.asarray(pcd.points)
+        colors = np.asarray(pcd.colors)
+        max_primitives = int(max_primitives)
+        original_count = points.shape[0]
+        if max_primitives > 0 and original_count > max_primitives:
+            # Local CPU RNG: repeatable per seed without perturbing CUDA RNG.
+            rng = np.random.default_rng(int(initialization_seed))
+            keep = np.sort(rng.choice(original_count, size=max_primitives, replace=False))
+            points = points[keep]
+            colors = colors[keep]
+            print("Hard-cap initialization: sampled {} / {} points (seed={})".format(
+                max_primitives, original_count, initialization_seed))
+
+        fused_point_cloud = torch.tensor(points).float().cuda()
+        fused_color = RGB2SH(torch.tensor(colors).float().cuda())
         features = torch.zeros((fused_color.shape[0], 3, (self.max_sh_degree + 1) ** 2)).float().cuda()
         features[:, :3, 0 ] = fused_color
         features[:, 3:, 1:] = 0.0
 
         print("Number of points at initialisation : ", fused_point_cloud.shape[0])
 
-        dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(np.asarray(pcd.points)).float().cuda()), 0.0000001)
+        dist2 = torch.clamp_min(distCUDA2(torch.from_numpy(points).float().cuda()), 0.0000001)
         scales = torch.log(torch.sqrt(dist2))[...,None].repeat(1, 2)
         rots = torch.rand((fused_point_cloud.shape[0], 4), device="cuda")
 
@@ -143,12 +202,21 @@ class GaussianModel:
         self._scaling = nn.Parameter(scales.requires_grad_(True))
         self._rotation = nn.Parameter(rots.requires_grad_(True))
         self._opacity = nn.Parameter(opacities.requires_grad_(True))
+        if self.enable_primitive_wave:
+            wave = self._initial_wave(fused_point_cloud.shape[0], "cuda")
+            self._wave_params = nn.Parameter(wave.requires_grad_(True))
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
     def training_setup(self, training_args):
         self.percent_dense = training_args.percent_dense
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
+        legacy_wave_lr = float(training_args.wave_lr)
+        self.wave_amp_lr = float(training_args.wave_amp_lr) if training_args.wave_amp_lr > 0 else legacy_wave_lr
+        self.wave_freq_lr = float(training_args.wave_freq_lr) if training_args.wave_freq_lr > 0 else legacy_wave_lr
+        self.wave_phase_frozen = bool(getattr(training_args, "wave_freeze_phase", False))
+        self.wave_phase_lr = 0.0 if self.wave_phase_frozen else (
+            float(training_args.wave_phase_lr) if training_args.wave_phase_lr > 0 else legacy_wave_lr)
 
         l = [
             {'params': [self._xyz], 'lr': training_args.position_lr_init * self.spatial_lr_scale, "name": "xyz"},
@@ -158,12 +226,32 @@ class GaussianModel:
             {'params': [self._scaling], 'lr': training_args.scaling_lr, "name": "scaling"},
             {'params': [self._rotation], 'lr': training_args.rotation_lr, "name": "rotation"}
         ]
+        if self.enable_primitive_wave:
+            l.append({"params": [self._wave_params], "lr": self.wave_amp_lr, "name": "wave"})
 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
         self.xyz_scheduler_args = get_expon_lr_func(lr_init=training_args.position_lr_init*self.spatial_lr_scale,
                                                     lr_final=training_args.position_lr_final*self.spatial_lr_scale,
                                                     lr_delay_mult=training_args.position_lr_delay_mult,
                                                     max_steps=training_args.position_lr_max_steps)
+
+    def capture_wave_update_state(self):
+        """Save frequency/phase values immediately before Adam.step()."""
+        if not self.enable_primitive_wave or self._wave_params.numel() == 0:
+            return None
+        if self.wave_freq_lr == self.wave_amp_lr and self.wave_phase_lr == self.wave_amp_lr:
+            return None
+        return self._wave_params.detach()[:, 3:6].clone()
+
+    @torch.no_grad()
+    def apply_wave_component_lrs(self, previous):
+        """Apply true component-specific Adam rates to packed Wave data."""
+        if previous is None:
+            return
+        current = self._wave_params[:, 3:6]
+        delta = current - previous
+        current[:, :2].copy_(previous[:, :2] + delta[:, :2] * (self.wave_freq_lr / self.wave_amp_lr))
+        current[:, 2:].copy_(previous[:, 2:] + delta[:, 2:] * (self.wave_phase_lr / self.wave_amp_lr))
 
     def update_learning_rate(self, iteration):
         ''' Learning rate scheduling per step '''
@@ -185,6 +273,8 @@ class GaussianModel:
             l.append('scale_{}'.format(i))
         for i in range(self._rotation.shape[1]):
             l.append('rot_{}'.format(i))
+        if self.enable_primitive_wave:
+            l.extend(["wave_amp_r", "wave_amp_g", "wave_amp_b", "wave_ku", "wave_kv", "wave_phase", "wave_gate"])
         return l
 
     def save_ply(self, path):
@@ -197,11 +287,14 @@ class GaussianModel:
         opacities = self._opacity.detach().cpu().numpy()
         scale = self._scaling.detach().cpu().numpy()
         rotation = self._rotation.detach().cpu().numpy()
+        wave = self._wave_params.detach().cpu().numpy() if self.enable_primitive_wave else None
 
         dtype_full = [(attribute, 'f4') for attribute in self.construct_list_of_attributes()]
 
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
         attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation), axis=1)
+        if self.enable_primitive_wave:
+            attributes = np.concatenate((attributes, wave), axis=1)
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)
@@ -251,6 +344,13 @@ class GaussianModel:
         self._opacity = nn.Parameter(torch.tensor(opacities, dtype=torch.float, device="cuda").requires_grad_(True))
         self._scaling = nn.Parameter(torch.tensor(scales, dtype=torch.float, device="cuda").requires_grad_(True))
         self._rotation = nn.Parameter(torch.tensor(rots, dtype=torch.float, device="cuda").requires_grad_(True))
+        if self.enable_primitive_wave:
+            names = ["wave_amp_r", "wave_amp_g", "wave_amp_b", "wave_ku", "wave_kv", "wave_phase", "wave_gate"]
+            properties = {p.name for p in plydata.elements[0].properties}
+            wave = self._initial_wave(xyz.shape[0], "cuda").cpu().numpy()
+            if all(name in properties for name in names):
+                wave = np.stack([np.asarray(plydata.elements[0][name]) for name in names], axis=1)
+            self._wave_params = nn.Parameter(torch.tensor(wave, dtype=torch.float, device="cuda").requires_grad_(True))
 
         self.active_sh_degree = self.max_sh_degree
 
@@ -297,6 +397,8 @@ class GaussianModel:
         self._opacity = optimizable_tensors["opacity"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
+        if self.enable_primitive_wave:
+            self._wave_params = optimizable_tensors["wave"]
 
         self.xyz_gradient_accum = self.xyz_gradient_accum[valid_points_mask]
 
@@ -325,13 +427,15 @@ class GaussianModel:
 
         return optimizable_tensors
 
-    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation):
+    def densification_postfix(self, new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_wave=None):
         d = {"xyz": new_xyz,
         "f_dc": new_features_dc,
         "f_rest": new_features_rest,
         "opacity": new_opacities,
         "scaling" : new_scaling,
         "rotation" : new_rotation}
+        if self.enable_primitive_wave:
+            d["wave"] = new_wave
 
         optimizable_tensors = self.cat_tensors_to_optimizer(d)
         self._xyz = optimizable_tensors["xyz"]
@@ -340,12 +444,28 @@ class GaussianModel:
         self._opacity = optimizable_tensors["opacity"]
         self._scaling = optimizable_tensors["scaling"]
         self._rotation = optimizable_tensors["rotation"]
+        if self.enable_primitive_wave:
+            self._wave_params = optimizable_tensors["wave"]
 
         self.xyz_gradient_accum = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.denom = torch.zeros((self.get_xyz.shape[0], 1), device="cuda")
         self.max_radii2D = torch.zeros((self.get_xyz.shape[0]), device="cuda")
 
-    def densify_and_split(self, grads, grad_threshold, scene_extent, N=2):
+    @staticmethod
+    def _topk_mask(mask, scores, max_selected):
+        """Keep at most max_selected True entries, preferring larger scores."""
+        if max_selected is None or max_selected <= 0:
+            return torch.zeros_like(mask, dtype=torch.bool)
+        count = int(mask.sum().item())
+        if count <= max_selected:
+            return mask
+        selected_indices = torch.where(mask)[0]
+        top_indices = torch.topk(scores[selected_indices], k=max_selected, sorted=False).indices
+        limited = torch.zeros_like(mask, dtype=torch.bool)
+        limited[selected_indices[top_indices]] = True
+        return limited
+
+    def densify_and_split(self, grads, grad_threshold, scene_extent, N=2, max_new_points=None):
         n_init_points = self.get_xyz.shape[0]
         # Extract points that satisfy the gradient condition
         padded_grad = torch.zeros((n_init_points), device="cuda")
@@ -353,6 +473,11 @@ class GaussianModel:
         selected_pts_mask = torch.where(padded_grad >= grad_threshold, True, False)
         selected_pts_mask = torch.logical_and(selected_pts_mask,
                                               torch.max(self.get_scaling, dim=1).values > self.percent_dense*scene_extent)
+
+        if max_new_points is not None:
+            # Replacing one parent with N children consumes N-1 net primitives.
+            max_selected = max_new_points // (N - 1)
+            selected_pts_mask = self._topk_mask(selected_pts_mask, padded_grad, max_selected)
 
         stds = self.get_scaling[selected_pts_mask].repeat(N,1)
         stds = torch.cat([stds, 0 * torch.ones_like(stds[:,:1])], dim=-1)
@@ -365,33 +490,42 @@ class GaussianModel:
         new_features_dc = self._features_dc[selected_pts_mask].repeat(N,1,1)
         new_features_rest = self._features_rest[selected_pts_mask].repeat(N,1,1)
         new_opacity = self._opacity[selected_pts_mask].repeat(N,1)
+        new_wave = self._wave_params[selected_pts_mask].repeat(N, 1) if self.enable_primitive_wave else None
 
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation)
+        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacity, new_scaling, new_rotation, new_wave)
 
         prune_filter = torch.cat((selected_pts_mask, torch.zeros(N * selected_pts_mask.sum(), device="cuda", dtype=bool)))
         self.prune_points(prune_filter)
 
-    def densify_and_clone(self, grads, grad_threshold, scene_extent):
+    def densify_and_clone(self, grads, grad_threshold, scene_extent, max_new_points=None):
         # Extract points that satisfy the gradient condition
         selected_pts_mask = torch.where(torch.norm(grads, dim=-1) >= grad_threshold, True, False)
         selected_pts_mask = torch.logical_and(selected_pts_mask,
                                               torch.max(self.get_scaling, dim=1).values <= self.percent_dense*scene_extent)
         
+        if max_new_points is not None:
+            selected_pts_mask = self._topk_mask(selected_pts_mask, torch.norm(grads, dim=-1), max_new_points)
+
         new_xyz = self._xyz[selected_pts_mask]
         new_features_dc = self._features_dc[selected_pts_mask]
         new_features_rest = self._features_rest[selected_pts_mask]
         new_opacities = self._opacity[selected_pts_mask]
         new_scaling = self._scaling[selected_pts_mask]
         new_rotation = self._rotation[selected_pts_mask]
+        new_wave = self._wave_params[selected_pts_mask] if self.enable_primitive_wave else None
 
-        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation)
+        self.densification_postfix(new_xyz, new_features_dc, new_features_rest, new_opacities, new_scaling, new_rotation, new_wave)
 
-    def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size):
+    def densify_and_prune(self, max_grad, min_opacity, extent, max_screen_size, max_primitives=0):
         grads = self.xyz_gradient_accum / self.denom
         grads[grads.isnan()] = 0.0
 
-        self.densify_and_clone(grads, max_grad, extent)
-        self.densify_and_split(grads, max_grad, extent)
+        max_primitives = int(max_primitives)
+        remaining = None if max_primitives <= 0 else max(0, max_primitives - self.get_xyz.shape[0])
+        self.densify_and_clone(grads, max_grad, extent, max_new_points=remaining)
+        if remaining is not None:
+            remaining = max(0, max_primitives - self.get_xyz.shape[0])
+        self.densify_and_split(grads, max_grad, extent, max_new_points=remaining)
 
         prune_mask = (self.get_opacity < min_opacity).squeeze()
         if max_screen_size:

@@ -218,6 +218,262 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
             
     return cam_infos
 
+def loadReplicaPoses(traj_path):
+    poses = []
+
+    with open(traj_path, "r", encoding="utf-8") as f:
+        for line_idx, line in enumerate(f):
+            line = line.strip()
+            if not line:
+                continue
+
+            values = np.fromstring(line, sep=" ", dtype=np.float64)
+            if values.size != 16:
+                raise ValueError(
+                    f"Invalid Replica pose at line {line_idx + 1}: expected 16 values, got {values.size}"
+                )
+
+            poses.append(values.reshape(4, 4))
+
+    if not poses:
+        raise RuntimeError(f"No poses found in {traj_path}")
+
+    return poses
+
+def loadReplicaCameraParams(cam_params_path):
+    """Load original Replica and flat collected-camera JSON schemas."""
+    with open(cam_params_path, "r", encoding="utf-8") as f:
+        contents = json.load(f)
+
+    camera = contents.get("camera", contents)
+    # Original Replica uses w/h/scale; the collected server-room dataset uses
+    # width/height/depth_png_scale. Keep both schemas on one loader path.
+    return {
+        "width": int(camera["w"] if "w" in camera else camera["width"]),
+        "height": int(camera["h"] if "h" in camera else camera["height"]),
+        "fx": float(camera["fx"]),
+        "fy": float(camera["fy"]),
+        "cx": float(camera["cx"]),
+        "cy": float(camera["cy"]),
+        "scale": float(camera.get("scale", camera.get("depth_png_scale", 1.0))),
+    }
+
+def convertReplicaPose(raw_pose, convention="nice"):
+    pose = raw_pose.copy()
+
+    if convention == "raw":
+        return pose
+
+    if convention == "nice":
+        pose[:3, 1] *= -1.0
+        pose[:3, 2] *= -1.0
+        return pose
+
+    raise ValueError(f"Unknown Replica pose convention: {convention}")
+
+def voxelDownsample(points, colors, voxel_size):
+    if voxel_size is None or voxel_size <= 0 or len(points) == 0:
+        return points, colors
+
+    voxel_keys = np.floor(points / voxel_size).astype(np.int64)
+    unique_keys, inverse = np.unique(voxel_keys, axis=0, return_inverse=True)
+
+    counts = np.bincount(inverse)
+    sums_xyz = np.zeros((unique_keys.shape[0], 3), dtype=np.float64)
+    sums_rgb = np.zeros((unique_keys.shape[0], 3), dtype=np.float64)
+    np.add.at(sums_xyz, inverse, points)
+    np.add.at(sums_rgb, inverse, colors)
+
+    points_ds = sums_xyz / counts[:, None]
+    colors_ds = sums_rgb / counts[:, None]
+    return points_ds, colors_ds
+
+def backprojectReplicaRGBD(rgb, depth, c2w, fx, fy, cx, cy, pixel_stride=8, min_depth=0.1, max_depth=10.0):
+    height, width = depth.shape
+    v, u = np.mgrid[0:height:pixel_stride, 0:width:pixel_stride]
+    z = depth[v, u]
+
+    valid = np.isfinite(z) & (z > min_depth) & (z < max_depth)
+    if not np.any(valid):
+        return np.empty((0, 3), dtype=np.float64), np.empty((0, 3), dtype=np.float64)
+
+    u_valid = u[valid].astype(np.float64)
+    v_valid = v[valid].astype(np.float64)
+    z_valid = z[valid].astype(np.float64)
+
+    x = (u_valid - cx) * z_valid / fx
+    y = (v_valid - cy) * z_valid / fy
+    camera_points = np.column_stack((x, y, z_valid))
+
+    rotation = c2w[:3, :3]
+    translation = c2w[:3, 3]
+    world_points = (rotation @ camera_points.T).T + translation
+
+    colors = rgb[v[valid], u[valid]].astype(np.float64) / 255.0
+    return world_points, colors
+
+def readReplicaSceneInfo(path, white_background, eval, args, llffhold=8):
+    del white_background
+
+    results_dir = os.path.join(path, "results")
+    traj_path = os.path.join(path, "traj.txt")
+    cam_params_path = os.path.join(path, "cam_params.json")
+    if not os.path.exists(cam_params_path):
+        cam_params_path = os.path.join(path, "camera.json")
+    if not os.path.exists(cam_params_path):
+        cam_params_path = os.path.join(os.path.dirname(path), "cam_params.json")
+
+    if not os.path.isdir(results_dir):
+        raise FileNotFoundError(f"Missing Replica results directory: {results_dir}")
+    if not os.path.exists(traj_path):
+        raise FileNotFoundError(f"Missing Replica trajectory file: {traj_path}")
+    if not os.path.exists(cam_params_path):
+        raise FileNotFoundError(f"Missing Replica camera params file: {cam_params_path}")
+
+    cam_params = loadReplicaCameraParams(cam_params_path)
+    poses = loadReplicaPoses(traj_path)
+    pose_convention = getattr(args, "replica_pose_convention", "raw")
+
+    rgb_paths = sorted(Path(results_dir).glob("frame*.jpg"))
+    depth_paths = sorted(Path(results_dir).glob("depth*.png"))
+    num_available = min(len(rgb_paths), len(depth_paths), len(poses))
+    if num_available == 0:
+        raise RuntimeError(f"No usable Replica frames found in {results_dir}")
+
+    print(f"Replica frames available: {num_available}")
+
+    all_indices = list(range(num_available))
+    if eval:
+        train_indices = [idx for idx in all_indices if idx % llffhold != 0]
+        test_indices = [idx for idx in all_indices if idx % llffhold == 0]
+    else:
+        train_indices = all_indices
+        test_indices = []
+
+    pointcloud_path = str(getattr(args, "replica_pointcloud_path", "")).strip()
+    pointcloud_cache_tag = str(getattr(args, "replica_pointcloud_cache_tag", "")).strip()
+    if pointcloud_path:
+        ply_path = os.path.abspath(os.path.expanduser(pointcloud_path))
+        print(f"Using explicit Replica initializer: {ply_path}")
+    elif pointcloud_cache_tag:
+        safe_tag = "".join(c if c.isalnum() or c in ("-", "_", ".") else "_" for c in pointcloud_cache_tag)
+        if not safe_tag:
+            raise ValueError("--replica_pointcloud_cache_tag must contain at least one safe filename character")
+        ply_path = os.path.join(path, f"points3d_{pose_convention}_{safe_tag}.ply")
+        print(f"Using tagged Replica initializer cache: {os.path.basename(ply_path)}")
+    else:
+        plane_seed_path = os.path.join(path, "points3d_plane_seed.ply")
+        if os.path.exists(plane_seed_path):
+            print("Found plane-seed initializer, using points3d_plane_seed.ply")
+            ply_path = plane_seed_path
+        else:
+            ply_path = os.path.join(path, f"points3d_{pose_convention}.ply")
+    if not os.path.exists(ply_path):
+        print("Building initial Replica point cloud from RGB-D frames...")
+        point_frame_stride = max(1, int(getattr(args, "replica_depth_frame_stride", 20)))
+        pixel_stride = max(1, int(getattr(args, "replica_depth_pixel_stride", 8)))
+        voxel_size = float(getattr(args, "replica_depth_voxel_size", 0.02))
+        min_depth = float(getattr(args, "replica_min_depth", 0.1))
+        max_depth = float(getattr(args, "replica_max_depth", 10.0))
+
+        sample_indices = train_indices[::point_frame_stride]
+        if not sample_indices:
+            sample_indices = train_indices[:1]
+
+        all_points = []
+        all_colors = []
+        for frame_idx in sample_indices:
+            rgb = np.array(Image.open(rgb_paths[frame_idx]).convert("RGB"))
+            depth_raw = np.array(Image.open(depth_paths[frame_idx]))
+            depth = depth_raw.astype(np.float32) / cam_params["scale"]
+            c2w = convertReplicaPose(poses[frame_idx], pose_convention)
+            points, colors = backprojectReplicaRGBD(
+                rgb=rgb,
+                depth=depth,
+                c2w=c2w,
+                fx=cam_params["fx"],
+                fy=cam_params["fy"],
+                cx=cam_params["cx"],
+                cy=cam_params["cy"],
+                pixel_stride=pixel_stride,
+                min_depth=min_depth,
+                max_depth=max_depth,
+            )
+            if len(points) > 0:
+                all_points.append(points)
+                all_colors.append(colors)
+
+        if not all_points:
+            raise RuntimeError("Could not build a Replica point cloud from the depth maps.")
+
+        merged_points = np.concatenate(all_points, axis=0)
+        merged_colors = np.concatenate(all_colors, axis=0)
+        merged_points, merged_colors = voxelDownsample(merged_points, merged_colors, voxel_size)
+        storePly(ply_path, merged_points, (merged_colors * 255.0).astype(np.uint8))
+
+    try:
+        pcd = fetchPly(ply_path)
+    except:
+        pcd = None
+
+    train_cam_infos = []
+    test_cam_infos = []
+    FovX = focal2fov(cam_params["fx"], cam_params["width"])
+    FovY = focal2fov(cam_params["fy"], cam_params["height"])
+
+    for idx in train_indices:
+        image = Image.open(rgb_paths[idx]).convert("RGB")
+        c2w = convertReplicaPose(poses[idx], pose_convention)
+        w2c = np.linalg.inv(c2w)
+        R = np.transpose(w2c[:3, :3])
+        T = w2c[:3, 3]
+        train_cam_infos.append(
+            CameraInfo(
+                uid=idx,
+                R=R,
+                T=T,
+                FovY=FovY,
+                FovX=FovX,
+                image=image,
+                image_path=str(rgb_paths[idx]),
+                image_name=rgb_paths[idx].stem,
+                width=cam_params["width"],
+                height=cam_params["height"],
+            )
+        )
+
+    for idx in test_indices:
+        image = Image.open(rgb_paths[idx]).convert("RGB")
+        c2w = convertReplicaPose(poses[idx], pose_convention)
+        w2c = np.linalg.inv(c2w)
+        R = np.transpose(w2c[:3, :3])
+        T = w2c[:3, 3]
+        test_cam_infos.append(
+            CameraInfo(
+                uid=idx,
+                R=R,
+                T=T,
+                FovY=FovY,
+                FovX=FovX,
+                image=image,
+                image_path=str(rgb_paths[idx]),
+                image_name=rgb_paths[idx].stem,
+                width=cam_params["width"],
+                height=cam_params["height"],
+            )
+        )
+
+    nerf_normalization = getNerfppNorm(train_cam_infos)
+
+    scene_info = SceneInfo(
+        point_cloud=pcd,
+        train_cameras=train_cam_infos,
+        test_cameras=test_cam_infos,
+        nerf_normalization=nerf_normalization,
+        ply_path=ply_path,
+    )
+    return scene_info
+
 def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
     print("Reading Training Transforms")
     train_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", white_background, extension)
@@ -256,5 +512,6 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
 
 sceneLoadTypeCallbacks = {
     "Colmap": readColmapSceneInfo,
-    "Blender" : readNerfSyntheticInfo
+    "Blender" : readNerfSyntheticInfo,
+    "Replica": readReplicaSceneInfo
 }

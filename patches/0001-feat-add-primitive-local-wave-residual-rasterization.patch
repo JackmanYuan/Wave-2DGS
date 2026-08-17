@@ -1,0 +1,540 @@
+From 5be97890600e54348c177dea8cc8f1d99ae82ab6 Mon Sep 17 00:00:00 2001
+From: Tzu-Chun Yuan <tzu-chun.yuan@niar.org.tw>
+Date: Mon, 17 Aug 2026 10:39:34 +0800
+Subject: [PATCH] feat: add primitive-local wave residual rasterization
+
+---
+ cuda_rasterizer/backward.cu           | 42 ++++++++++++++++++++++-----
+ cuda_rasterizer/backward.h            |  4 ++-
+ cuda_rasterizer/forward.cu            | 18 ++++++++++--
+ cuda_rasterizer/forward.h             |  1 +
+ cuda_rasterizer/rasterizer.h          |  3 ++
+ cuda_rasterizer/rasterizer_impl.cu    | 10 +++++--
+ diff_surfel_rasterization/__init__.py | 19 ++++++++----
+ rasterize_points.cu                   | 12 ++++++--
+ rasterize_points.h                    |  4 ++-
+ 9 files changed, 93 insertions(+), 20 deletions(-)
+
+diff --git a/cuda_rasterizer/backward.cu b/cuda_rasterizer/backward.cu
+index 0a78cc2..4ed56ad 100644
+--- a/cuda_rasterizer/backward.cu
++++ b/cuda_rasterizer/backward.cu
+@@ -152,6 +152,7 @@ renderCUDA(
+ 	const float4* __restrict__ normal_opacity,
+ 	const float* __restrict__ transMats,
+ 	const float* __restrict__ colors,
++	const float* __restrict__ wave_params,
+ 	const float* __restrict__ depths,
+ 	const float* __restrict__ final_Ts,
+ 	const uint32_t* __restrict__ n_contrib,
+@@ -161,7 +162,8 @@ renderCUDA(
+ 	float3* __restrict__ dL_dmean2D,
+ 	float* __restrict__ dL_dnormal3D,
+ 	float* __restrict__ dL_dopacity,
+-	float* __restrict__ dL_dcolors)
++	float* __restrict__ dL_dcolors,
++	float* __restrict__ dL_dwave_params)
+ {
+ 	// We rasterize again. Compute necessary block info.
+ 	auto block = cg::this_thread_block();
+@@ -184,6 +186,7 @@ renderCUDA(
+ 	__shared__ float2 collected_xy[BLOCK_SIZE];
+ 	__shared__ float4 collected_normal_opacity[BLOCK_SIZE];
+ 	__shared__ float collected_colors[C * BLOCK_SIZE];
++	__shared__ float collected_wave[7 * BLOCK_SIZE];
+ 	__shared__ float3 collected_Tu[BLOCK_SIZE];
+ 	__shared__ float3 collected_Tv[BLOCK_SIZE];
+ 	__shared__ float3 collected_Tw[BLOCK_SIZE];
+@@ -266,6 +269,7 @@ renderCUDA(
+ 			collected_Tw[block.thread_rank()] = {transMats[9 * coll_id+6], transMats[9 * coll_id+7], transMats[9 * coll_id+8]};
+ 			for (int i = 0; i < C; i++)
+ 				collected_colors[i * BLOCK_SIZE + block.thread_rank()] = colors[coll_id * C + i];
++			if (wave_params != nullptr) for (int q = 0; q < 7; q++) collected_wave[q * BLOCK_SIZE + block.thread_rank()] = wave_params[7 * coll_id + q];
+ 				// collected_depths[block.thread_rank()] = depths[coll_id];
+ 		}
+ 		block.sync();
+@@ -324,9 +328,17 @@ renderCUDA(
+ 			// pair).
+ 			float dL_dalpha = 0.0f;
+ 			const int global_id = collected_id[j];
++			float wave_cos = 0.0f, wave_sin = 0.0f;
++			if (wave_params != nullptr) {
++				float wave_phase = collected_wave[3 * BLOCK_SIZE + j] * s.x + collected_wave[4 * BLOCK_SIZE + j] * s.y + collected_wave[5 * BLOCK_SIZE + j];
++                float wave_gate = collected_wave[6 * BLOCK_SIZE + j];
++				wave_cos = wave_gate * cosf(wave_phase); wave_sin = wave_gate * sinf(wave_phase);
++			}
++			float wave_phase_grad = 0.0f;
+ 			for (int ch = 0; ch < C; ch++)
+ 			{
+-				const float c = collected_colors[ch * BLOCK_SIZE + j];
++				float c = collected_colors[ch * BLOCK_SIZE + j];
++				if (wave_params != nullptr && ch < 3) c += collected_wave[ch * BLOCK_SIZE + j] * wave_cos;
+ 				// Update last color (to be used in the next iteration)
+ 				accum_rec[ch] = last_alpha * last_color[ch] + (1.f - last_alpha) * accum_rec[ch];
+ 				last_color[ch] = c;
+@@ -337,6 +349,18 @@ renderCUDA(
+ 				// Atomic, since this pixel is just one of potentially
+ 				// many that were affected by this Gaussian.
+ 				atomicAdd(&(dL_dcolors[global_id * C + ch]), dchannel_dcolor * dL_dchannel);
++				if (wave_params != nullptr && ch < 3) {
++					float g = dchannel_dcolor * dL_dchannel;
++					float amp = collected_wave[ch * BLOCK_SIZE + j];
++					atomicAdd(&dL_dwave_params[global_id * 7 + ch], g * wave_cos);
++					wave_phase_grad += g * amp * (-wave_sin);
++				}
++			}
++
++			if (wave_params != nullptr) {
++				atomicAdd(&dL_dwave_params[global_id * 7 + 3], wave_phase_grad * s.x);
++				atomicAdd(&dL_dwave_params[global_id * 7 + 4], wave_phase_grad * s.y);
++				atomicAdd(&dL_dwave_params[global_id * 7 + 5], wave_phase_grad);
+ 			}
+ 
+ 			float dL_dz = 0.0f;
+@@ -399,8 +423,8 @@ renderCUDA(
+ 			if (rho3d <= rho2d) {
+ 				// Update gradients w.r.t. covariance of Gaussian 3x3 (T)
+ 				const float2 dL_ds = {
+-					dL_dG * -G * s.x + dL_dz * Tw.x,
+-					dL_dG * -G * s.y + dL_dz * Tw.y
++					dL_dG * -G * s.x + dL_dz * Tw.x + (wave_params != nullptr ? wave_phase_grad * collected_wave[3 * BLOCK_SIZE + j] : 0.0f),
++					dL_dG * -G * s.y + dL_dz * Tw.y + (wave_params != nullptr ? wave_phase_grad * collected_wave[4 * BLOCK_SIZE + j] : 0.0f)
+ 				};
+ 				const float3 dz_dTw = {s.x, s.y, 1.0};
+ 				const float dsx_pz = dL_ds.x / p.z;
+@@ -697,8 +721,9 @@ void BACKWARD::render(
+ 	const float* bg_color,
+ 	const float2* means2D,
+ 	const float4* normal_opacity,
+-	const float* colors,
+ 	const float* transMats,
++	const float* colors,
++	const float* wave_params,
+ 	const float* depths,
+ 	const float* final_Ts,
+ 	const uint32_t* n_contrib,
+@@ -708,7 +733,8 @@ void BACKWARD::render(
+ 	float3* dL_dmean2D,
+ 	float* dL_dnormal3D,
+ 	float* dL_dopacity,
+-	float* dL_dcolors)
++	float* dL_dcolors,
++	float* dL_dwave_params)
+ {
+ 	renderCUDA<NUM_CHANNELS> << <grid, block >> >(
+ 		ranges,
+@@ -720,6 +746,7 @@ void BACKWARD::render(
+ 		normal_opacity,
+ 		transMats,
+ 		colors,
++		wave_params,
+ 		depths,
+ 		final_Ts,
+ 		n_contrib,
+@@ -729,6 +756,7 @@ void BACKWARD::render(
+ 		dL_dmean2D,
+ 		dL_dnormal3D,
+ 		dL_dopacity,
+-		dL_dcolors
++		dL_dcolors,
++		dL_dwave_params
+ 		);
+ }
+diff --git a/cuda_rasterizer/backward.h b/cuda_rasterizer/backward.h
+index 6ed2847..6248ef6 100644
+--- a/cuda_rasterizer/backward.h
++++ b/cuda_rasterizer/backward.h
+@@ -31,6 +31,7 @@ namespace BACKWARD
+ 		const float4* normal_opacity,
+ 		const float* transMats,
+ 		const float* colors,
++		const float* wave_params,
+ 		const float* depths,
+ 		const float* final_Ts,
+ 		const uint32_t* n_contrib,
+@@ -40,7 +41,8 @@ namespace BACKWARD
+ 		float3* dL_dmean2D,
+ 		float* dL_dnormal3D,
+ 		float* dL_dopacity,
+-		float* dL_dcolors);
++		float* dL_dcolors,
++		float* dL_dwave_params);
+ 
+ 	void preprocess(
+ 		int P, int D, int M,
+diff --git a/cuda_rasterizer/forward.cu b/cuda_rasterizer/forward.cu
+index 6ba9e33..dea8121 100644
+--- a/cuda_rasterizer/forward.cu
++++ b/cuda_rasterizer/forward.cu
+@@ -262,6 +262,7 @@ renderCUDA(
+ 	float focal_x, float focal_y,
+ 	const float2* __restrict__ points_xy_image,
+ 	const float* __restrict__ features,
++	const float* __restrict__ wave_params,
+ 	const float* __restrict__ transMats,
+ 	const float* __restrict__ depths,
+ 	const float4* __restrict__ normal_opacity,
+@@ -297,6 +298,7 @@ renderCUDA(
+ 	__shared__ float3 collected_Tu[BLOCK_SIZE];
+ 	__shared__ float3 collected_Tv[BLOCK_SIZE];
+ 	__shared__ float3 collected_Tw[BLOCK_SIZE];
++	__shared__ float collected_wave[7 * BLOCK_SIZE];
+ 
+ 	// Initialize helper variables
+ 	float T = 1.0f;
+@@ -337,6 +339,7 @@ renderCUDA(
+ 			collected_Tu[block.thread_rank()] = {transMats[9 * coll_id+0], transMats[9 * coll_id+1], transMats[9 * coll_id+2]};
+ 			collected_Tv[block.thread_rank()] = {transMats[9 * coll_id+3], transMats[9 * coll_id+4], transMats[9 * coll_id+5]};
+ 			collected_Tw[block.thread_rank()] = {transMats[9 * coll_id+6], transMats[9 * coll_id+7], transMats[9 * coll_id+8]};
++			if (wave_params != nullptr) for (int q = 0; q < 7; q++) collected_wave[q * BLOCK_SIZE + block.thread_rank()] = wave_params[7 * coll_id + q];
+ 		}
+ 		block.sync();
+ 
+@@ -414,8 +417,17 @@ renderCUDA(
+ #endif
+ 
+ 			// Eq. (3) from 3D Gaussian splatting paper.
+-			for (int ch = 0; ch < CHANNELS; ch++)
+-				C[ch] += features[collected_id[j] * CHANNELS + ch] * w;
++			float wave_value = 0.0f;
++			if (wave_params != nullptr) {
++				float phase = collected_wave[3 * BLOCK_SIZE + j] * s.x + collected_wave[4 * BLOCK_SIZE + j] * s.y + collected_wave[5 * BLOCK_SIZE + j];
++                float gate = collected_wave[6 * BLOCK_SIZE + j];
++				wave_value = gate * cosf(phase);
++			}
++			for (int ch = 0; ch < CHANNELS; ch++) {
++				float color = features[collected_id[j] * CHANNELS + ch];
++				if (wave_params != nullptr && ch < 3) color += collected_wave[ch * BLOCK_SIZE + j] * wave_value;
++				C[ch] += color * w;
++			}
+ 			T = test_T;
+ 
+ 			// Keep track of last range entry to update this
+@@ -455,6 +467,7 @@ void FORWARD::render(
+ 	float focal_x, float focal_y,
+ 	const float2* means2D,
+ 	const float* colors,
++	const float* wave_params,
+ 	const float* transMats,
+ 	const float* depths,
+ 	const float4* normal_opacity,
+@@ -471,6 +484,7 @@ void FORWARD::render(
+ 		focal_x, focal_y,
+ 		means2D,
+ 		colors,
++		wave_params,
+ 		transMats,
+ 		depths,
+ 		normal_opacity,
+diff --git a/cuda_rasterizer/forward.h b/cuda_rasterizer/forward.h
+index e752194..6d6eb0c 100644
+--- a/cuda_rasterizer/forward.h
++++ b/cuda_rasterizer/forward.h
+@@ -58,6 +58,7 @@ namespace FORWARD
+ 		float focal_x, float focal_y,
+ 		const float2* points_xy_image,
+ 		const float* features,
++		const float* wave_params,
+ 		const float* transMats,
+ 		const float* depths,
+ 		const float4* normal_opacity,
+diff --git a/cuda_rasterizer/rasterizer.h b/cuda_rasterizer/rasterizer.h
+index 6c1b89b..7b7722c 100644
+--- a/cuda_rasterizer/rasterizer.h
++++ b/cuda_rasterizer/rasterizer.h
+@@ -36,6 +36,7 @@ namespace CudaRasterizer
+ 			const float* background,
+ 			const int width, int height,
+ 			const float* means3D,
++			const float* wave_params,
+ 			const float* shs,
+ 			const float* colors_precomp,
+ 			const float* opacities,
+@@ -58,6 +59,7 @@ namespace CudaRasterizer
+ 			const float* background,
+ 			const int width, int height,
+ 			const float* means3D,
++			const float* wave_params,
+ 			const float* shs,
+ 			const float* colors_precomp,
+ 			const float* scales,
+@@ -83,6 +85,7 @@ namespace CudaRasterizer
+ 			float* dL_dsh,
+ 			float* dL_dscale,
+ 			float* dL_drot,
++			float* dL_dwave_params,
+ 			bool debug);
+ 	};
+ };
+diff --git a/cuda_rasterizer/rasterizer_impl.cu b/cuda_rasterizer/rasterizer_impl.cu
+index 811a040..2727e5d 100644
+--- a/cuda_rasterizer/rasterizer_impl.cu
++++ b/cuda_rasterizer/rasterizer_impl.cu
+@@ -203,6 +203,7 @@ int CudaRasterizer::Rasterizer::forward(
+ 	const float* background,
+ 	const int width, int height,
+ 	const float* means3D,
++	const float* wave_params,
+ 	const float* shs,
+ 	const float* colors_precomp,
+ 	const float* opacities,
+@@ -329,6 +330,7 @@ int CudaRasterizer::Rasterizer::forward(
+ 		focal_x, focal_y,
+ 		geomState.means2D,
+ 		feature_ptr,
++		wave_params,
+ 		transMat_ptr,
+ 		geomState.depths,
+ 		geomState.normal_opacity,
+@@ -348,6 +350,7 @@ void CudaRasterizer::Rasterizer::backward(
+ 	const float* background,
+ 	const int width, int height,
+ 	const float* means3D,
++	const float* wave_params,
+ 	const float* shs,
+ 	const float* colors_precomp,
+ 	const float* scales,
+@@ -373,6 +376,7 @@ void CudaRasterizer::Rasterizer::backward(
+ 	float* dL_dsh,
+ 	float* dL_dscale,
+ 	float* dL_drot,
++	float* dL_dwave_params,
+ 	bool debug)
+ {
+ 	GeometryState geomState = GeometryState::fromChunk(geom_buffer, P);
+@@ -406,8 +410,9 @@ void CudaRasterizer::Rasterizer::backward(
+ 		background,
+ 		geomState.means2D,
+ 		geomState.normal_opacity,
+-		color_ptr,
+ 		transMat_ptr,
++		color_ptr,
++		wave_params,
+ 		depth_ptr,
+ 		imgState.accum_alpha,
+ 		imgState.n_contrib,
+@@ -417,7 +422,8 @@ void CudaRasterizer::Rasterizer::backward(
+ 		(float3*)dL_dmean2D,
+ 		dL_dnormal,
+ 		dL_dopacity,
+-		dL_dcolor), debug)
++		dL_dcolor,
++		dL_dwave_params), debug)
+ 
+ 	// Take care of the rest of preprocessing. Was the precomputed covariance
+ 	// given to us or a scales/rot pair? If precomputed, pass that. If not,
+diff --git a/diff_surfel_rasterization/__init__.py b/diff_surfel_rasterization/__init__.py
+index 236073b..e0a9666 100644
+--- a/diff_surfel_rasterization/__init__.py
++++ b/diff_surfel_rasterization/__init__.py
+@@ -27,6 +27,7 @@ def rasterize_gaussians(
+     scales,
+     rotations,
+     cov3Ds_precomp,
++    wave_params,
+     raster_settings,
+ ):
+     return _RasterizeGaussians.apply(
+@@ -38,6 +39,7 @@ def rasterize_gaussians(
+         scales,
+         rotations,
+         cov3Ds_precomp,
++        wave_params,
+         raster_settings,
+     )
+ 
+@@ -53,6 +55,7 @@ class _RasterizeGaussians(torch.autograd.Function):
+         scales,
+         rotations,
+         cov3Ds_precomp,
++        wave_params,
+         raster_settings,
+     ):
+ 
+@@ -60,6 +63,7 @@ class _RasterizeGaussians(torch.autograd.Function):
+         args = (
+             raster_settings.bg, 
+             means3D,
++            wave_params,
+             colors_precomp,
+             opacities,
+             scales,
+@@ -94,7 +98,7 @@ class _RasterizeGaussians(torch.autograd.Function):
+         # Keep relevant tensors for backward
+         ctx.raster_settings = raster_settings
+         ctx.num_rendered = num_rendered
+-        ctx.save_for_backward(colors_precomp, means3D, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer)
++        ctx.save_for_backward(wave_params, colors_precomp, means3D, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer)
+         return color, radii, depth
+ 
+     @staticmethod
+@@ -103,11 +107,12 @@ class _RasterizeGaussians(torch.autograd.Function):
+         # Restore necessary values from context
+         num_rendered = ctx.num_rendered
+         raster_settings = ctx.raster_settings
+-        colors_precomp, means3D, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer = ctx.saved_tensors
++        wave_params, colors_precomp, means3D, scales, rotations, cov3Ds_precomp, radii, sh, geomBuffer, binningBuffer, imgBuffer = ctx.saved_tensors
+ 
+         # Restructure args as C++ method expects them
+         args = (raster_settings.bg,
+                 means3D, 
++                wave_params,
+                 radii, 
+                 colors_precomp, 
+                 scales, 
+@@ -133,13 +138,13 @@ class _RasterizeGaussians(torch.autograd.Function):
+         if raster_settings.debug:
+             cpu_args = cpu_deep_copy_tuple(args) # Copy them before they can be corrupted
+             try:
+-                grad_means2D, grad_colors_precomp, grad_opacities, grad_means3D, grad_cov3Ds_precomp, grad_sh, grad_scales, grad_rotations = _C.rasterize_gaussians_backward(*args)
++                grad_means2D, grad_colors_precomp, grad_opacities, grad_means3D, grad_cov3Ds_precomp, grad_sh, grad_scales, grad_rotations, grad_wave_params = _C.rasterize_gaussians_backward(*args)
+             except Exception as ex:
+                 torch.save(cpu_args, "snapshot_bw.dump")
+                 print("\nAn error occured in backward. Writing snapshot_bw.dump for debugging.\n")
+                 raise ex
+         else:
+-             grad_means2D, grad_colors_precomp, grad_opacities, grad_means3D, grad_cov3Ds_precomp, grad_sh, grad_scales, grad_rotations = _C.rasterize_gaussians_backward(*args)
++             grad_means2D, grad_colors_precomp, grad_opacities, grad_means3D, grad_cov3Ds_precomp, grad_sh, grad_scales, grad_rotations, grad_wave_params = _C.rasterize_gaussians_backward(*args)
+ 
+         grads = (
+             grad_means3D,
+@@ -150,6 +155,7 @@ class _RasterizeGaussians(torch.autograd.Function):
+             grad_scales,
+             grad_rotations,
+             grad_cov3Ds_precomp,
++            grad_wave_params,
+             None,
+         )
+ 
+@@ -185,7 +191,7 @@ class GaussianRasterizer(nn.Module):
+             
+         return visible
+ 
+-    def forward(self, means3D, means2D, opacities, shs = None, colors_precomp = None, scales = None, rotations = None, cov3D_precomp = None):
++    def forward(self, means3D, means2D, opacities, shs = None, colors_precomp = None, scales = None, rotations = None, cov3D_precomp = None, wave_params = None):
+         
+         raster_settings = self.raster_settings
+ 
+@@ -206,6 +212,8 @@ class GaussianRasterizer(nn.Module):
+             rotations = torch.Tensor([]).cuda()
+         if cov3D_precomp is None:
+             cov3D_precomp = torch.Tensor([]).cuda()
++        if wave_params is None:
++            wave_params = torch.Tensor([]).cuda()
+         
+ 
+         # Invoke C++/CUDA rasterization routine
+@@ -218,6 +226,7 @@ class GaussianRasterizer(nn.Module):
+             scales, 
+             rotations,
+             cov3D_precomp,
++            wave_params,
+             raster_settings, 
+         )
+ 
+diff --git a/rasterize_points.cu b/rasterize_points.cu
+index efc6491..300d880 100644
+--- a/rasterize_points.cu
++++ b/rasterize_points.cu
+@@ -40,6 +40,7 @@ std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torc
+ RasterizeGaussiansCUDA(
+ 	const torch::Tensor& background,
+ 	const torch::Tensor& means3D,
++	const torch::Tensor& wave_params,
+ 	const torch::Tensor& colors,
+ 	const torch::Tensor& opacity,
+ 	const torch::Tensor& scales,
+@@ -69,6 +70,7 @@ RasterizeGaussiansCUDA(
+ 
+   CHECK_INPUT(background);
+   CHECK_INPUT(means3D);
++  CHECK_INPUT(wave_params);
+   CHECK_INPUT(colors);
+   CHECK_INPUT(opacity);
+   CHECK_INPUT(scales);
+@@ -112,6 +114,7 @@ RasterizeGaussiansCUDA(
+ 		background.contiguous().data<float>(),
+ 		W, H,
+ 		means3D.contiguous().data<float>(),
++		wave_params.numel() ? wave_params.contiguous().data<float>() : nullptr,
+ 		sh.contiguous().data_ptr<float>(),
+ 		colors.contiguous().data<float>(), 
+ 		opacity.contiguous().data<float>(), 
+@@ -133,10 +136,11 @@ RasterizeGaussiansCUDA(
+   return std::make_tuple(rendered, out_color, out_others, radii, geomBuffer, binningBuffer, imgBuffer);
+ }
+ 
+-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
++std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+  RasterizeGaussiansBackwardCUDA(
+ 	 const torch::Tensor& background,
+ 	const torch::Tensor& means3D,
++	const torch::Tensor& wave_params,
+ 	const torch::Tensor& radii,
+ 	const torch::Tensor& colors,
+ 	const torch::Tensor& scales,
+@@ -161,6 +165,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
+ 
+   CHECK_INPUT(background);
+   CHECK_INPUT(means3D);
++  CHECK_INPUT(wave_params);
+   CHECK_INPUT(radii);
+   CHECK_INPUT(colors);
+   CHECK_INPUT(scales);
+@@ -193,6 +198,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
+   torch::Tensor dL_dsh = torch::zeros({P, M, 3}, means3D.options());
+   torch::Tensor dL_dscales = torch::zeros({P, 2}, means3D.options());
+   torch::Tensor dL_drotations = torch::zeros({P, 4}, means3D.options());
++  torch::Tensor dL_dwave_params = torch::zeros({P, 7}, means3D.options());
+   
+   if(P != 0)
+   {  
+@@ -200,6 +206,7 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
+ 	  background.contiguous().data<float>(),
+ 	  W, H, 
+ 	  means3D.contiguous().data<float>(),
++	  wave_params.numel() ? wave_params.contiguous().data<float>() : nullptr,
+ 	  sh.contiguous().data<float>(),
+ 	  colors.contiguous().data<float>(),
+ 	  scales.data_ptr<float>(),
+@@ -226,10 +233,11 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
+ 	  dL_dsh.contiguous().data<float>(),
+ 	  dL_dscales.contiguous().data<float>(),
+ 	  dL_drotations.contiguous().data<float>(),
++	  dL_dwave_params.contiguous().data<float>(),
+ 	  debug);
+   }
+ 
+-  return std::make_tuple(dL_dmeans2D, dL_dcolors, dL_dopacity, dL_dmeans3D, dL_dtransMat, dL_dsh, dL_dscales, dL_drotations);
++  return std::make_tuple(dL_dmeans2D, dL_dcolors, dL_dopacity, dL_dmeans3D, dL_dtransMat, dL_dsh, dL_dscales, dL_drotations, dL_dwave_params);
+ }
+ 
+ torch::Tensor markVisible(
+diff --git a/rasterize_points.h b/rasterize_points.h
+index eeda02e..fdbb488 100644
+--- a/rasterize_points.h
++++ b/rasterize_points.h
+@@ -19,6 +19,7 @@ std::tuple<int, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torc
+ RasterizeGaussiansCUDA(
+ 	const torch::Tensor& background,
+ 	const torch::Tensor& means3D,
++	const torch::Tensor& wave_params,
+ 	const torch::Tensor& colors,
+ 	const torch::Tensor& opacity,
+ 	const torch::Tensor& scales,
+@@ -37,10 +38,11 @@ RasterizeGaussiansCUDA(
+ 	const bool prefiltered,
+ 	const bool debug);
+ 
+-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
++std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+  RasterizeGaussiansBackwardCUDA(
+ 	 const torch::Tensor& background,
+ 	const torch::Tensor& means3D,
++	const torch::Tensor& wave_params,
+ 	const torch::Tensor& radii,
+ 	const torch::Tensor& colors,
+ 	const torch::Tensor& scales,
+-- 
+2.43.0
+

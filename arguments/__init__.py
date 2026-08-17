@@ -55,11 +55,29 @@ class ModelParams(ParamGroup):
         self.data_device = "cuda"
         self.eval = False
         self.render_items = ['RGB', 'Alpha', 'Normal', 'Depth', 'Edge', 'Curvature']
+        self.replica_pose_convention = "raw"
+        self.replica_depth_frame_stride = 20
+        self.replica_depth_pixel_stride = 8
+        self.replica_depth_voxel_size = 0.02
+        self.replica_min_depth = 0.1
+        self.replica_max_depth = 10.0
+        self.replica_pointcloud_cache_tag = ""
+        self.replica_pointcloud_path = ""
+        self.initial_ply = ""
+        self.enable_primitive_wave = False
+        self.wave_k_init = 6.283185307
+        self.wave_amp_init = 0.0
+        self.wave_random_phase_init = False
+        self.wave_amplitude_only = False
+        # Explicit phase freeze; non-positive component LRs retain legacy fallback.
+        self.wave_freeze_phase = False
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
         g = super().extract(args)
         g.source_path = os.path.abspath(g.source_path)
+        if g.initial_ply:
+            g.initial_ply = os.path.abspath(g.initial_ply)
         return g
 
 class PipelineParams(ParamGroup):
@@ -81,6 +99,17 @@ class OptimizationParams(ParamGroup):
         self.opacity_lr = 0.05
         self.scaling_lr = 0.005
         self.rotation_lr = 0.001
+        self.wave_lr = 0.001
+        # A non-positive component LR inherits the legacy --wave_lr value.
+        self.wave_amp_lr = -1.0
+        self.wave_freq_lr = -1.0
+        self.wave_phase_lr = -1.0
+
+        # Optional group-Lasso on RGB wave amplitudes. Kept at zero so the
+        # original 2DGS and existing Wave V1 behaviour are unchanged.
+        self.wave_amp_group_lasso = 0.0
+        self.wave_parameter_log_interval = 0
+        self.wave_amp_group_lasso_start_iter = 500
         self.percent_dense = 0.01
         self.lambda_dssim = 0.2
         self.lambda_dist = 0.0
@@ -92,6 +121,7 @@ class OptimizationParams(ParamGroup):
         self.densify_from_iter = 500
         self.densify_until_iter = 15_000
         self.densify_grad_threshold = 0.0002
+        self.max_primitives = 0
         super().__init__(parser, "Optimization Parameters")
 
 def get_combined_args(parser : ArgumentParser):

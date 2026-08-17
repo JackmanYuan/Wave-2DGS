@@ -12,6 +12,7 @@
 import torch
 from scene import Scene
 import os
+import json
 from tqdm import tqdm
 from os import makedirs
 from gaussian_renderer import render
@@ -42,12 +43,16 @@ if __name__ == "__main__":
     parser.add_argument("--num_cluster", default=50, type=int, help='Mesh: number of connected clusters to export')
     parser.add_argument("--unbounded", action="store_true", help='Mesh: using unbounded mode for meshing')
     parser.add_argument("--mesh_res", default=1024, type=int, help='Mesh: resolution for unbounded mesh extraction')
+    parser.add_argument("--mesh_view_manifest", default="", type=str,
+                        help="JSON manifest of train-camera UIDs used only for TSDF mesh fusion")
     args = get_combined_args(parser)
     print("Rendering " + args.model_path)
 
 
     dataset, iteration, pipe = model.extract(args), args.iteration, pipeline.extract(args)
-    gaussians = GaussianModel(dataset.sh_degree)
+    gaussians = GaussianModel(dataset.sh_degree,
+                              enable_primitive_wave=getattr(dataset, "enable_primitive_wave", False),
+                              wave_k_init=getattr(dataset, "wave_k_init", 6.283185307))
     scene = Scene(dataset, gaussians, load_iteration=iteration, shuffle=False)
     bg_color = [1,1,1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -88,7 +93,22 @@ if __name__ == "__main__":
         os.makedirs(train_dir, exist_ok=True)
         # set the active_sh to 0 to export only diffuse texture
         gaussExtractor.gaussians.active_sh_degree = 0
-        gaussExtractor.reconstruction(scene.getTrainCameras())
+        mesh_cameras = scene.getTrainCameras()
+        if args.mesh_view_manifest:
+            with open(args.mesh_view_manifest, "r", encoding="utf-8") as handle:
+                manifest = json.load(handle)
+            requested_uids = [int(uid) for uid in manifest["camera_uids"]]
+            by_uid = {int(camera.uid): camera for camera in mesh_cameras}
+            missing = [uid for uid in requested_uids if uid not in by_uid]
+            if missing:
+                raise ValueError("Mesh manifest contains train-camera UIDs that are unavailable: {}"
+                                 .format(missing[:8]))
+            mesh_cameras = [by_uid[uid] for uid in requested_uids]
+            if not mesh_cameras:
+                raise ValueError("Mesh manifest selected no train cameras")
+            print("TSDF mesh fusion uses {}/{} train cameras from {}".format(
+                len(mesh_cameras), len(scene.getTrainCameras()), args.mesh_view_manifest))
+        gaussExtractor.reconstruction(mesh_cameras)
         # extract the mesh and save
         if args.unbounded:
             name = 'fuse_unbounded.ply'

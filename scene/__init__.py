@@ -22,7 +22,8 @@ class Scene:
 
     gaussians : GaussianModel
 
-    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=True, resolution_scales=[1.0]):
+    def __init__(self, args : ModelParams, gaussians : GaussianModel, load_iteration=None, shuffle=True,
+                 resolution_scales=[1.0], max_primitives=0, initialization_seed=0):
         """b
         :param path: Path to colmap scene main folder.
         """
@@ -42,6 +43,10 @@ class Scene:
 
         if os.path.exists(os.path.join(args.source_path, "sparse")):
             scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval)
+        elif os.path.exists(os.path.join(args.source_path, "traj.txt")) and \
+             os.path.isdir(os.path.join(args.source_path, "results")):
+            print("Found Replica RGB-D sequence, assuming Replica data set!")
+            scene_info = sceneLoadTypeCallbacks["Replica"](args.source_path, args.white_background, args.eval, args)
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
             print("Found transforms_train.json file, assuming Blender data set!")
             scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.white_background, args.eval)
@@ -80,7 +85,9 @@ class Scene:
                                                            "iteration_" + str(self.loaded_iter),
                                                            "point_cloud.ply"))
         else:
-            self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
+            self.gaussians.create_from_pcd(
+                scene_info.point_cloud, self.cameras_extent,
+                max_primitives=max_primitives, initialization_seed=initialization_seed)
 
     def save(self, iteration):
         point_cloud_path = os.path.join(self.model_path, "point_cloud/iteration_{}".format(iteration))

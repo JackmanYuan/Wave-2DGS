@@ -102,7 +102,8 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         opacities = opacity,
         scales = scales,
         rotations = rotations,
-        cov3D_precomp = cov3D_precomp
+        cov3D_precomp = cov3D_precomp,
+        wave_params = pc.get_wave_params if pc.enable_primitive_wave else None
     )
     
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
