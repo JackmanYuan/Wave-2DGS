@@ -17,7 +17,11 @@ dependencies:
   - cuda-nvcc=11.8
   - gcc_linux-64=11.2
   - gxx_linux-64=11.2
+  - matplotlib
   - ninja
+  - numpy
+  - pandas
+  - scipy
   - pip:
     - open3d==0.18.0
     - mediapy==1.1.2

@@ -21,9 +21,6 @@ eval
 *.fls
 *.log
 *.synctex.gz
-/paper-template-Latest/main_wave2dgs.pdf
-/paper-template-Latest/REFERENCE_CATALOG.pdf
-/RESEARCH_README.pdf
 
 # Local research references and scratch material
 /2D Gaussian Splatting for Geometrically Accurate Radiance Fields.pdf

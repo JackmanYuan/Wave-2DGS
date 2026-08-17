@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use Wave-2DGS, please cite the accompanying paper and the original 2DGS work."
+title: "Wave-2DGS: Sparse Local Wave Modulation for Appearance and Geometry Reconstruction"
+type: software
+authors:
+  - family-names: Yuan
+    given-names: Tzu-Chun
+    affiliation: "National Center for High-performance Computing, National Institutes of Applied Research"
+  - family-names: Tsai
+    given-names: Tsung-Che
+    affiliation: "National Center for High-performance Computing, National Institutes of Applied Research"
+  - family-names: Chen
+    given-names: Wei-Sheng
+    affiliation: "National Center for High-performance Computing, National Institutes of Applied Research"
+  - family-names: Tu
+    given-names: Kuo-Ming
+    affiliation: "National Center for High-performance Computing, National Institutes of Applied Research"
+abstract: >-
+  Wave-2DGS augments each 2D Gaussian primitive with an explicit,
+  view-independent sinusoidal RGB residual and learns selective utilization
+  through group-sparse amplitude regularization.
+keywords:
+  - 2D Gaussian Splatting
+  - novel-view synthesis
+  - surface reconstruction
+  - sinusoidal modulation

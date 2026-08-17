@@ -30,10 +30,10 @@ echo "Host compiler: ${CXX:-system default}"
 
 git -C "${ROOT}" submodule update --init --recursive
 
-if git -C "${RASTERIZER}" apply --check "${WAVE_PATCH}" >/dev/null 2>&1; then
+if git -C "${RASTERIZER}" apply --check --unidiff-zero "${WAVE_PATCH}" >/dev/null 2>&1; then
   echo "Applying Wave-2DGS rasterizer patch"
-  git -C "${RASTERIZER}" apply "${WAVE_PATCH}"
-elif git -C "${RASTERIZER}" apply --reverse --check "${WAVE_PATCH}" >/dev/null 2>&1; then
+  git -C "${RASTERIZER}" apply --unidiff-zero "${WAVE_PATCH}"
+elif git -C "${RASTERIZER}" apply --reverse --check --unidiff-zero "${WAVE_PATCH}" >/dev/null 2>&1; then
   echo "Wave-2DGS rasterizer patch is already applied"
 else
   echo "Cannot apply Wave-2DGS rasterizer patch cleanly." >&2
