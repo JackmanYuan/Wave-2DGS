@@ -36,8 +36,8 @@ The code follows the original 2DGS environment and is intended for research and
 evaluation use.
 
 ```bash
-git clone --recursive <wave-2dgs-repository-url>
-cd <wave-2dgs-directory>
+git clone --recursive https://github.com/JackmanYuan/Wave-2DGS.git
+cd Wave-2DGS
 
 conda env create --file environment.yml
 conda activate surfel_splatting
