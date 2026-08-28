@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Wave-2DGS adds a sparse, explicit local sinusoidal appearance residual to 2D Gaussian Splatting.">
+  <meta name="theme-color" content="#0f4c81">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Wave-2DGS">
+  <meta property="og:description" content="Sparse local wave modulation for appearance and geometry reconstruction.">
+  <meta property="og:url" content="https://jackmanyuan.github.io/Wave-2DGS/">
+  <meta property="og:image" content="https://jackmanyuan.github.io/Wave-2DGS/assets/teaser.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <title>Wave-2DGS</title>
+  <link rel="stylesheet" href="project.css">
+</head>
+<body>
+  <header class="site-header">
+    <nav class="nav shell" aria-label="Primary navigation">
+      <a class="brand" href="#top">Wave-2DGS</a>
+      <div class="nav-links">
+        <a href="#abstract">Abstract</a>
+        <a href="#method">Method</a>
+        <a href="#results">Results</a>
+        <a href="https://github.com/JackmanYuan/Wave-2DGS">Code</a>
+      </div>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero shell">
+      <div class="venue">ECCV 2026 · NeuSLAM Workshop · Proceedings Track</div>
+      <h1>Wave-2DGS</h1>
+      <p class="subtitle">Sparse Local Wave Modulation for Appearance and Geometry Reconstruction</p>
+      <p class="authors">
+        <strong>Tzu-Chun Yuan</strong><span>·</span>
+        Tsung-Che Tsai<span>·</span>
+        Wei-Sheng Chen<span>·</span>
+        Kuo-Ming Tu
+      </p>
+      <p class="affiliation">National Center for High-performance Computing, National Institutes of Applied Research</p>
+      <div class="actions">
+        <a class="button primary" href="https://github.com/JackmanYuan/Wave-2DGS">Code</a>
+        <a class="button" href="https://github.com/JackmanYuan/Wave-2DGS#readme">Documentation</a>
+        <a class="button" href="mailto:tzu-chun.yuan@niar.org.tw">Contact</a>
+      </div>
+      <p class="paper-note">Paper link will be added when the proceedings version is available.</p>
+    </section>
+
+    <section class="shell figure-card teaser" aria-labelledby="teaser-caption">
+      <img src="assets/teaser.png" alt="Wave-2DGS results on DTU and Replica, including rendering, wave contribution, and projected wave patterns.">
+      <p id="teaser-caption" class="caption">
+        Wave-2DGS on DTU (top) and Replica (bottom). From left: ground truth, rendering,
+        normalized wave contribution, and projected local wave patterns.
+      </p>
+    </section>
+
+    <section id="abstract" class="section shell narrow">
+      <p class="eyebrow">Overview</p>
+      <h2>Abstract</h2>
+      <p>
+        2D Gaussian Splatting (2DGS) provides an explicit scene representation for
+        novel-view rendering and surface reconstruction. However, its appearance model
+        offers limited spatial variation within each primitive, leaving locally complex
+        appearance to be represented largely through additional primitives introduced
+        by densification. We introduce Wave-2DGS, a minimal explicit and sparse
+        local-wave augmentation for 2DGS. Each primitive receives one learnable
+        sinusoidal RGB residual in local 2D coordinates, parameterized by amplitude,
+        spatial frequency, and phase, while group-sparse regularization suppresses
+        unnecessary wave amplitudes. Setting an amplitude to zero exactly recovers the
+        original 2DGS appearance. Extensive experiments on Replica and DTU demonstrate
+        consistent improvements in novel-view rendering and surface reconstruction
+        quality. Post-training amplitude thresholding removes 73.4% of the wave payload
+        while retaining 98.8% of the PSNR gain over 2DGS. Controlled ablations further
+        verify the contribution and selective spatial allocation of the learned
+        sinusoidal representation.
+      </p>
+    </section>
+
+    <section id="method" class="section shell">
+      <p class="eyebrow">Representation</p>
+      <h2>One explicit local wave per primitive</h2>
+      <p class="lead narrow">
+        The original spherical-harmonic branch models view-dependent color. A second,
+        view-independent branch adds local spatial variation in normalized tangent-plane
+        coordinates while sharing the primitive geometry, opacity, visibility, and
+        Gaussian support.
+      </p>
+      <div class="figure-card method-figure">
+        <img src="assets/method.svg" alt="A 2DGS primitive plus local sinusoidal modulation produces a Wave-2DGS primitive with the same Gaussian support.">
+      </div>
+    </section>
+
+    <section id="results" class="section shell">
+      <p class="eyebrow">Key findings</p>
+      <h2>Rendering, geometry, and selective capacity</h2>
+      <div class="feature-grid">
+        <article class="feature">
+          <div class="feature-index">01</div>
+          <h3>Minimal augmentation</h3>
+          <p>Each primitive receives interpretable RGB amplitude, 2D spatial frequency, and phase parameters.</p>
+        </article>
+        <article class="feature">
+          <div class="feature-index">02</div>
+          <h3>Joint appearance and geometry gains</h3>
+          <p>Paired evaluations on Replica and DTU improve novel-view rendering and surface reconstruction.</p>
+        </article>
+        <article class="feature">
+          <div class="feature-index">03</div>
+          <h3>Sparse utilization</h3>
+          <p>Group sparsity and post-training thresholding retain useful waves while suppressing unnecessary payload.</p>
+        </article>
+      </div>
+      <div class="stats" aria-label="Wave-2DGS headline results">
+        <div class="stat"><strong>73.4%</strong><span>wave payload removed</span></div>
+        <div class="stat"><strong>98.8%</strong><span>PSNR gain retained</span></div>
+        <div class="stat"><strong>2</strong><span>geometry and rendering benchmarks</span></div>
+      </div>
+    </section>
+
+    <section class="section shell resources">
+      <p class="eyebrow">Reproduce</p>
+      <h2>Resources</h2>
+      <div class="resource-links">
+        <a href="https://github.com/JackmanYuan/Wave-2DGS">Source code <span>↗</span></a>
+        <a href="https://github.com/JackmanYuan/Wave-2DGS/blob/main/docs/DATASETS.md">Dataset setup <span>↗</span></a>
+        <a href="https://github.com/JackmanYuan/Wave-2DGS/blob/main/docs/REPRODUCIBILITY.md">Reproducibility <span>↗</span></a>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="shell footer-inner">
+      <span>Wave-2DGS · 2026</span>
+      <span>Built on <a href="https://github.com/hbb1/2d-gaussian-splatting">2D Gaussian Splatting</a></span>
+    </div>
+  </footer>
+</body>
+</html>

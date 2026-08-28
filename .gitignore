@@ -10,6 +10,7 @@
 **__pycache__**
 *.png
 !assets/wave2dgs_teaser.png
+!docs/assets/teaser.png
 *.out
 eval
 *.npz

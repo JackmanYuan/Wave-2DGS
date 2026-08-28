@@ -3,6 +3,12 @@
 **Sparse local wave modulation for 2D Gaussian Splatting.**
 
 <p align="center">
+  <a href="https://jackmanyuan.github.io/Wave-2DGS/"><strong>Project Page</strong></a> ·
+  <a href="docs/REPRODUCIBILITY.md"><strong>Reproducibility</strong></a> ·
+  <a href="docs/DATASETS.md"><strong>Datasets</strong></a>
+</p>
+
+<p align="center">
   <img src="assets/wave2dgs_teaser.png" width="100%" alt="Wave-2DGS rendering, wave contribution, and projected wave patterns on DTU and Replica">
 </p>
 
