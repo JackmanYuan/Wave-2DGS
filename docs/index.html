@@ -20,6 +20,7 @@
       <a class="brand" href="#top">Wave-2DGS</a>
       <div class="nav-links">
         <a href="#abstract">Abstract</a>
+        <a href="#comparison">Compare</a>
         <a href="#method">Method</a>
         <a href="https://github.com/JackmanYuan/Wave-2DGS">Code</a>
       </div>
@@ -96,6 +97,228 @@
       </p>
     </section>
 
+    <section id="comparison" class="section shell comparison-section">
+      <p class="eyebrow">Comparison and visualization</p>
+      <h2>See what the local wave adds</h2>
+      <p class="lead narrow">
+        Compare rendering quality and inspect the learned wave contribution.
+      </p>
+
+      <div class="comparison-column-headings" aria-hidden="true">
+        <div class="comparison-column-heading">
+          <strong>Replica</strong>
+          <span>room1 · held-out frame 400</span>
+        </div>
+        <div class="comparison-column-heading">
+          <strong>DTU</strong>
+          <span>scan24 · frame 33</span>
+        </div>
+      </div>
+
+      <div class="comparison-row">
+        <div class="comparison-row-heading">
+          <h3>Method comparison</h3>
+          <p>Separately trained models with the same primitive budget.</p>
+        </div>
+
+        <article class="figure-card comparison-card">
+          <p class="comparison-mobile-title">Replica · room1 · held-out frame 400</p>
+          <div class="image-compare replica-compare" style="--position: 50%;"
+            data-left-label="2DGS" data-right-label="Wave-2DGS">
+            <img class="compare-image compare-after"
+              src="assets/comparisons/room1_wave2dgs.png"
+              alt="Replica room1 frame 400 rendered using Wave-2DGS"
+              draggable="false">
+            <div class="compare-before">
+              <img class="compare-image"
+                src="assets/comparisons/room1_2dgs.png"
+                alt="Replica room1 frame 400 rendered using original 2DGS"
+                draggable="false">
+            </div>
+            <span class="compare-label compare-label-left">2DGS</span>
+            <span class="compare-label compare-label-right">Wave-2DGS</span>
+            <input class="compare-range" type="range" min="0" max="100" value="50"
+              aria-label="Reveal original 2DGS or Wave-2DGS on Replica room1">
+            <div class="compare-divider" aria-hidden="true">
+              <span class="compare-handle">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m9 7-5 5 5 5M15 7l5 5-5 5" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                    stroke-linejoin="round"/>
+                </svg>
+              </span>
+            </div>
+          </div>
+        </article>
+
+        <article class="figure-card comparison-card">
+          <p class="comparison-mobile-title">DTU · scan24 · frame 33</p>
+          <div class="image-compare dtu-compare" style="--position: 50%;"
+            data-left-label="2DGS" data-right-label="Wave-2DGS">
+            <img class="compare-image compare-after"
+              src="assets/comparisons/dtu_scan24_wave2dgs.png"
+              alt="DTU scan24 frame 33 rendered using Wave-2DGS"
+              draggable="false">
+            <div class="compare-before">
+              <img class="compare-image"
+                src="assets/comparisons/dtu_scan24_2dgs.png"
+                alt="DTU scan24 frame 33 rendered using original 2DGS"
+                draggable="false">
+            </div>
+            <span class="compare-label compare-label-left">2DGS</span>
+            <span class="compare-label compare-label-right">Wave-2DGS</span>
+            <input class="compare-range" type="range" min="0" max="100" value="50"
+              aria-label="Reveal original 2DGS or Wave-2DGS on DTU scan24">
+            <div class="compare-divider" aria-hidden="true">
+              <span class="compare-handle">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m9 7-5 5 5 5M15 7l5 5-5 5" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                    stroke-linejoin="round"/>
+                </svg>
+              </span>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <div class="comparison-row">
+        <div class="comparison-row-heading">
+          <h3>Wave utilization</h3>
+          <p>One trained Wave-2DGS checkpoint, with its residual off or on.</p>
+        </div>
+
+        <article class="figure-card comparison-card">
+          <p class="comparison-mobile-title">Replica · room1 · held-out frame 400</p>
+          <div class="image-compare replica-compare" style="--position: 50%;"
+            data-left-label="Wave Off" data-right-label="Wave On">
+            <img class="compare-image compare-after"
+              src="assets/comparisons/room1_wave2dgs.png"
+              alt="Replica room1 frame 400 with the learned wave residual enabled"
+              draggable="false">
+            <div class="compare-before">
+              <img class="compare-image"
+                src="assets/comparisons/room1_wave_off.png"
+                alt="Replica room1 frame 400 with the learned wave residual disabled"
+                draggable="false">
+            </div>
+            <span class="compare-label compare-label-left">Wave Off</span>
+            <span class="compare-label compare-label-right">Wave On</span>
+            <input class="compare-range" type="range" min="0" max="100" value="50"
+              aria-label="Disable or enable the learned wave residual on Replica room1">
+            <div class="compare-divider" aria-hidden="true">
+              <span class="compare-handle">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m9 7-5 5 5 5M15 7l5 5-5 5" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                    stroke-linejoin="round"/>
+                </svg>
+              </span>
+            </div>
+          </div>
+        </article>
+
+        <article class="figure-card comparison-card">
+          <p class="comparison-mobile-title">DTU · scan24 · frame 33</p>
+          <div class="image-compare dtu-compare" style="--position: 50%;"
+            data-left-label="Wave Off" data-right-label="Wave On">
+            <img class="compare-image compare-after"
+              src="assets/comparisons/dtu_scan24_wave2dgs.png"
+              alt="DTU scan24 frame 33 with the learned wave residual enabled"
+              draggable="false">
+            <div class="compare-before">
+              <img class="compare-image"
+                src="assets/comparisons/dtu_scan24_wave_off.png"
+                alt="DTU scan24 frame 33 with the learned wave residual disabled"
+                draggable="false">
+            </div>
+            <span class="compare-label compare-label-left">Wave Off</span>
+            <span class="compare-label compare-label-right">Wave On</span>
+            <input class="compare-range" type="range" min="0" max="100" value="50"
+              aria-label="Disable or enable the learned wave residual on DTU scan24">
+            <div class="compare-divider" aria-hidden="true">
+              <span class="compare-handle">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m9 7-5 5 5 5M15 7l5 5-5 5" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                    stroke-linejoin="round"/>
+                </svg>
+              </span>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <div class="comparison-row">
+        <div class="comparison-row-heading">
+          <h3>Wave contribution</h3>
+          <p>Normalized |Wave On − Wave Off| localizes the residual's image-space effect.</p>
+        </div>
+
+        <article class="figure-card comparison-card">
+          <p class="comparison-mobile-title">Replica · room1 · held-out frame 400</p>
+          <div class="image-compare replica-compare" style="--position: 50%;"
+            data-left-label="Wave-2DGS" data-right-label="Wave Contribution">
+            <img class="compare-image compare-after"
+              src="assets/comparisons/room1_wave_contribution.png"
+              alt="Normalized wave contribution for Replica room1 frame 400"
+              draggable="false">
+            <div class="compare-before">
+              <img class="compare-image"
+                src="assets/comparisons/room1_wave2dgs.png"
+                alt="Replica room1 frame 400 with the learned wave residual enabled"
+                draggable="false">
+            </div>
+            <span class="compare-label compare-label-left">Wave-2DGS</span>
+            <span class="compare-label compare-label-right">Wave Contribution</span>
+            <input class="compare-range" type="range" min="0" max="100" value="50"
+              aria-label="Reveal Wave-2DGS rendering or normalized wave contribution on Replica room1">
+            <div class="compare-divider" aria-hidden="true">
+              <span class="compare-handle">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m9 7-5 5 5 5M15 7l5 5-5 5" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                    stroke-linejoin="round"/>
+                </svg>
+              </span>
+            </div>
+          </div>
+        </article>
+
+        <article class="figure-card comparison-card">
+          <p class="comparison-mobile-title">DTU · scan24 · frame 33</p>
+          <div class="image-compare dtu-compare" style="--position: 50%;"
+            data-left-label="Wave-2DGS" data-right-label="Wave Contribution">
+            <img class="compare-image compare-after"
+              src="assets/comparisons/dtu_scan24_wave_contribution.png"
+              alt="Normalized wave contribution for DTU scan24 frame 33"
+              draggable="false">
+            <div class="compare-before">
+              <img class="compare-image"
+                src="assets/comparisons/dtu_scan24_wave2dgs.png"
+                alt="DTU scan24 frame 33 with the learned wave residual enabled"
+                draggable="false">
+            </div>
+            <span class="compare-label compare-label-left">Wave-2DGS</span>
+            <span class="compare-label compare-label-right">Wave Contribution</span>
+            <input class="compare-range" type="range" min="0" max="100" value="50"
+              aria-label="Reveal Wave-2DGS rendering or normalized wave contribution on DTU scan24">
+            <div class="compare-divider" aria-hidden="true">
+              <span class="compare-handle">
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m9 7-5 5 5 5M15 7l5 5-5 5" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                    stroke-linejoin="round"/>
+                </svg>
+              </span>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <p class="comparison-hint">Drag · swipe · or focus a slider and use the arrow keys</p>
+    </section>
+
     <section id="method" class="section shell">
       <p class="eyebrow">Method</p>
       <h2>One explicit local wave per primitive</h2>
@@ -118,5 +341,6 @@
       <span>Built on <a href="https://github.com/hbb1/2d-gaussian-splatting">2D Gaussian Splatting</a></span>
     </div>
   </footer>
+  <script src="project.js" defer></script>
 </body>
 </html>

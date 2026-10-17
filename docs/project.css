@@ -97,6 +97,141 @@ h1 { margin: 18px 0 0; font-size: clamp(4.1rem, 10vw, 7.6rem); line-height: 0.95
 .method-figure { padding: 28px 20px 20px; }
 .method-figure img { width: 100%; }
 
+.comparison-section > h2,
+.comparison-section > .eyebrow,
+.comparison-section > .lead { margin-inline: auto; text-align: center; }
+.comparison-column-headings,
+.comparison-row {
+  display: grid;
+  grid-template-columns: 142px minmax(0, 1.32fr) minmax(0, 1fr);
+  gap: 16px;
+}
+.comparison-column-headings {
+  align-items: end;
+  margin: 0 0 10px;
+  padding-left: 158px;
+  grid-template-columns: minmax(0, 1.32fr) minmax(0, 1fr);
+}
+.comparison-column-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+}
+.comparison-column-heading strong {
+  color: var(--ink);
+  font-size: 1.02rem;
+}
+.comparison-column-heading span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+.comparison-row {
+  align-items: center;
+  margin-top: 16px;
+}
+.comparison-row-heading h3 {
+  margin: 0 0 5px;
+  color: var(--ink);
+  font-size: 1rem;
+  line-height: 1.25;
+}
+.comparison-row-heading p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+.comparison-card { min-width: 0; border-radius: 14px; }
+.comparison-mobile-title { display: none; }
+.image-compare {
+  position: relative;
+  overflow: hidden;
+  background: #e8eef5;
+  isolation: isolate;
+  user-select: none;
+}
+.replica-compare { aspect-ratio: 30 / 17; }
+.dtu-compare { aspect-ratio: 777 / 581; }
+.image-compare:focus-within { box-shadow: inset 0 0 0 3px rgba(22, 166, 200, 0.48); }
+.compare-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  object-fit: cover;
+  pointer-events: none;
+}
+.compare-before {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  clip-path: inset(0 calc(100% - var(--position)) 0 0);
+}
+.compare-label {
+  position: absolute;
+  z-index: 4;
+  top: 18px;
+  padding: 7px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 8px;
+  color: white;
+  background: rgba(12, 25, 42, 0.66);
+  box-shadow: 0 5px 18px rgba(0, 0, 0, 0.14);
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1;
+  backdrop-filter: blur(8px);
+}
+.compare-label-left { left: 18px; }
+.compare-label-right { right: 18px; }
+.compare-range {
+  position: absolute;
+  z-index: 6;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: ew-resize;
+}
+.compare-divider {
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  bottom: 0;
+  left: var(--position);
+  width: 2px;
+  transform: translateX(-1px);
+  color: var(--blue);
+  background: white;
+  box-shadow: 0 0 0 1px rgba(18, 39, 65, 0.18), 0 0 18px rgba(18, 39, 65, 0.26);
+  pointer-events: none;
+}
+.compare-handle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  width: 48px;
+  height: 48px;
+  place-items: center;
+  transform: translate(-50%, -50%);
+  border: 3px solid white;
+  border-radius: 50%;
+  background: var(--blue);
+  box-shadow: 0 7px 24px rgba(18, 39, 65, 0.30);
+}
+.compare-handle svg { width: 27px; height: 27px; }
+.comparison-hint {
+  margin: 13px 0 0;
+  color: var(--muted);
+  text-align: center;
+  font-size: 0.82rem !important;
+}
+
 footer { margin-top: 104px; border-top: 1px solid var(--line); color: var(--muted); background: var(--wash); }
 .footer-inner { display: flex; justify-content: space-between; gap: 20px; padding: 25px 0; font-size: 0.87rem; }
 .footer-inner a { color: var(--blue); }
@@ -108,6 +243,30 @@ footer { margin-top: 104px; border-top: 1px solid var(--line); color: var(--mute
   h1 { font-size: clamp(3.4rem, 18vw, 5.2rem); }
   .section { padding-top: 76px; }
   .method-figure { padding: 18px 8px 12px; }
+  .comparison-column-headings { display: none; }
+  .comparison-row {
+    grid-template-columns: 1fr;
+    gap: 14px;
+    margin-top: 28px;
+  }
+  .comparison-row-heading { text-align: center; }
+  .comparison-row-heading h3 { font-size: 1.08rem; }
+  .comparison-row-heading p { max-width: 420px; margin-inline: auto; }
+  .comparison-mobile-title {
+    display: block;
+    margin: 0;
+    padding: 9px 12px;
+    color: var(--ink);
+    background: var(--wash);
+    font-size: 0.78rem !important;
+    font-weight: 750;
+    line-height: 1.35;
+    text-align: center;
+  }
+  .compare-label { top: 11px; padding: 6px 9px; font-size: 0.72rem; }
+  .compare-label-left { left: 11px; }
+  .compare-label-right { right: 11px; }
+  .compare-handle { width: 42px; height: 42px; }
   .footer-inner { flex-direction: column; }
 }
 
